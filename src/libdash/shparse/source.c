@@ -23,7 +23,7 @@ struct parse_source_ops {
   enum srcflag (*unget_char)(struct parse_source *, char);
   enum srcflag (*tell)(struct parse_source *, off_t *);
   enum srcflag (*seek)(struct parse_source *, off_t);
-  enum srcflag (*open)(struct parse_source *, void *);
+  enum srcflag (*open)(struct parse_source *, void const *);
   enum srcflag (*close)(struct parse_source *);
   /* ... */
 };
@@ -37,7 +37,7 @@ struct parse_source {
     size_t                 curpos;           /* Length of ungot data */
   } ungot;
   struct _source_data {
-    void                  *data;             /* Underlying data */
+    void const            *data;             /* Underlying data */
     off_t                  baseoff;          /* Base offset for position */
     size_t                 remain;           /* Amount of data remaining */
     size_t                 curpos;           /* Current position within data */
@@ -75,7 +75,7 @@ static enum srcflag dum_seek(struct parse_source *src, off_t pos)
 { 
   return SF_TRUE;
 }
-static enum srcflag dum_open(struct parse_source *src, void *data)
+static enum srcflag dum_open(struct parse_source *src, void const *data)
 { 
   return SF_TRUE; 
 }
@@ -154,7 +154,7 @@ static enum srcflag str_seek(struct parse_source *src, off_t off)
   src->data.curpos = off - src->data.baseoff;
   return SF_TRUE;
 }
-static enum srcflag str_open(struct parse_source *src, void *data)
+static enum srcflag str_open(struct parse_source *src, void const *data)
 {
   if (!src || !data) return SF_FALSE;
   src->data.data = data;
@@ -220,7 +220,7 @@ static enum srcflag fyl_seek(struct parse_source *src, off_t off)
   /* ... */
   return SF_TRUE;
 }
-static enum srcflag fyl_open(struct parse_source *src, void *data)
+static enum srcflag fyl_open(struct parse_source *src, void const *data)
 {
   const char *fname;
   FILE *fd;
@@ -348,11 +348,7 @@ char source_next_char(struct parse_context *ctx)
     ctx->int_error = IE_NOSOURCE;
     return '\0';
   } else {
-    enum srcflag sf;
-    while ((sf = src->ops->read_char(src, &chr)) == SF_NODATA) {
-      if (!(src = pop_source(ctx)))
-        return '\0';
-    }
+    enum srcflag sf = src->ops->read_char(src, &chr);
     switch (sf) {
     case SF_ERROR:
       ctx->int_error = IE_NOGETCHR;
@@ -363,6 +359,9 @@ char source_next_char(struct parse_context *ctx)
       if (chr == '\n')
         src->lineno++;
       return chr;
+    case SF_NODATA:
+      pop_source(ctx);
+      return '\0';
     default:
       break;
     }

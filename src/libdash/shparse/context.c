@@ -32,7 +32,7 @@ bool ctx_init(struct parse_context **ctx)
     obstack_init(&new->memstack);
     obstack_init(&new->txtstack);
     init_source(new);
-    new->lst_syntax = dtailq_init(new, NULL, sizeof(struct parse_syntax));
+    /*new->lst_syntax = dtailq_init(new, NULL, sizeof(struct parse_syntax));  -- defer to actual usage */
     new->lst_heredoc = stailq_init(new, NULL, sizeof(struct parse_heredoc));
     new->backquote = stailq_init(new, NULL, sizeof(struct parse_nodelist));
     *ctx = new;
