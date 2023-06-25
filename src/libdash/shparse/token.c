@@ -98,7 +98,7 @@ enum parse_tokid readtoken(struct parse_context *ctx)
   struct parse_token tok;
   struct parse_tokflags savekwd = ctx->chkflags;
 
-  while (true) {
+/*  while (true) {*/
     /* Perform the reread logic here */
     if (ctx->tokpushback) {
       ctx->tokpushback = false;
@@ -128,8 +128,10 @@ enum parse_tokid readtoken(struct parse_context *ctx)
     mrg_tokflags(&savekwd, ctx->chkflags);
     set_tokflags(&ctx->chkflags, tf_false, tf_false, tf_false, tf_keep);
 
-    if (tok.id != TWORD || ctx->quoteflag)
+    if (tok.id != TWORD || ctx->quoteflag) {
+      ctx->last_token = tok;
       return tok.id; 
+    }
 
     /* Check for keywords */
     if (savekwd.chkkwd) {
@@ -144,12 +146,13 @@ enum parse_tokid readtoken(struct parse_context *ctx)
     if (savekwd.chkalias) {
       /* TODO: Implement?? as not really executing the code */
     }
+    ctx->last_token = tok;
     return tok.id;
-  }
+/*  }*/
 }
 
 /* Provide a file reader which will skip esacped newlines */
-static inline char pgetc(struct parse_context *ctx)
+static inline char next_char(struct parse_context *ctx)
 {
   char chr;
 
@@ -157,7 +160,7 @@ static inline char pgetc(struct parse_context *ctx)
   return chr;
 }
 
-static inline char pgetc_eatbnl(struct parse_context *ctx)
+static inline char next_char_eatbnl(struct parse_context *ctx)
 {
   char chr;
 
@@ -189,14 +192,14 @@ static bool int_readtoken(struct parse_context *ctx,
   
   /* Repeat checking until a token or word is found */
   while (true) {
-    char chr = pgetc_eatbnl(ctx);
+    char chr = next_char_eatbnl(ctx);
     switch (chr) {
       case ' ':
       case '\t':
         continue;
 
       case '#':
-        while ((chr = pgetc(ctx)) != '\n' && chr != PEOF);
+        while ((chr = next_char(ctx)) != '\n' && chr != PEOF);
         pungetc(ctx, chr);
         continue;
 
@@ -209,7 +212,7 @@ static bool int_readtoken(struct parse_context *ctx,
         return true;
 
       case '&':
-        if (pgetc_eatbnl(ctx) == '&') {
+        if (next_char_eatbnl(ctx) == '&') {
           tok->id = TAND;
         } else {
           pungetc(ctx, chr);
@@ -218,7 +221,7 @@ static bool int_readtoken(struct parse_context *ctx,
         return true;
 
       case '|':
-        if (pgetc_eatbnl(ctx) == '|') {
+        if (next_char_eatbnl(ctx) == '|') {
           tok->id = TOR;
         } else {
           pungetc(ctx, chr);
@@ -227,7 +230,7 @@ static bool int_readtoken(struct parse_context *ctx,
         return true;
 
       case ';':
-        if (pgetc_eatbnl(ctx) == ';') {
+        if (next_char_eatbnl(ctx) == ';') {
           tok->id = TENDCASE;
         } else {
           pungetc(ctx, chr);
@@ -466,7 +469,7 @@ static bool syn_readtoken(struct parse_context *ctx,
 
       if (heredoc->striptabs) {
         while (chr == '\t') 
-          chr = pgetc(ctx);
+          chr = next_char(ctx);
       }
 
       for (ptr = heredoc->eofmark; obstack_1grow(sctx, chr), *ptr; ptr++) {
@@ -474,7 +477,7 @@ static bool syn_readtoken(struct parse_context *ctx,
           nosave = true;
           break;
         }
-        chr = pgetc(ctx);
+        chr = next_char(ctx);
       }
       if (nosave) {
         obstack_free(sctx, obstack_finish(sctx));
@@ -494,9 +497,9 @@ static bool syn_readtoken(struct parse_context *ctx,
         }
         obstack_1grow(sctx, chr);
         if (cursyn->type == SYN_SQUOTE)
-          chr = pgetc(ctx);
+          chr = next_char(ctx);
         else
-          chr = pgetc_eatbnl(ctx);
+          chr = next_char_eatbnl(ctx);
         loop_newline = true;
         break;
 
@@ -511,7 +514,7 @@ static bool syn_readtoken(struct parse_context *ctx,
         break;
 
       case CBACK:
-        chr = pgetc(ctx);
+        chr = next_char(ctx);
         if (chr == PEOF) {
           obstack_1grow(sctx, CTLESC);
           obstack_1grow(sctx, '\\');
@@ -586,7 +589,7 @@ static bool syn_readtoken(struct parse_context *ctx,
           obstack_1grow(sctx, chr);
           --cursyn->parenlevel;
         } else {
-          chr = pgetc_eatbnl(ctx);
+          chr = next_char_eatbnl(ctx);
           if (chr == ')') {
             obstack_1grow(sctx, CTLENDARI);
             cursyn = pop_syntax(ctx);
@@ -619,9 +622,9 @@ static bool syn_readtoken(struct parse_context *ctx,
       }
       if (!end_of_word) {
         if (cursyn->type == SYN_SQUOTE)
-          chr = pgetc(ctx);
+          chr = next_char(ctx);
         else
-          chr = pgetc_eatbnl(ctx);
+          chr = next_char_eatbnl(ctx);
       }
     }
   } while (loop_newline);
@@ -639,11 +642,14 @@ static bool syn_readtoken(struct parse_context *ctx,
     if ((chr == '>' || chr == '<') && !ctx->quoteflag && 
         strlen(txt) <= 2 && (!*txt || isdigit(*txt))) {
       int_parseredir(ctx, chr, *txt);
-      ctx->last_token.id = TREDIR;
+      tok->id = TREDIR;
+    } else { /* ... TODO Complete ... */
+      tok->id = TWORD;
+      tok->val.text = txt;
     }
   } else {
-    ctx->last_token.id = TWORD;
-    ctx->last_token.val.text = txt;
+    tok->id = TWORD;
+    tok->val.text = txt;
   }
   return true;
 fail:
@@ -662,10 +668,10 @@ void parseheredoc(struct parse_context *ctx)
       enum parse_toksyn syntab;
 
       if (hereptr->here->type == NHERE) {
-        ctx->cur_char = pgetc(ctx);
+        ctx->cur_char = next_char(ctx);
         syntab = SYN_SQUOTE;
       } else {
-        ctx->cur_char = pgetc_eatbnl(ctx);
+        ctx->cur_char = next_char_eatbnl(ctx);
         syntab = SYN_DQUOTE;
       }
   
@@ -684,7 +690,7 @@ static void int_parseredir(struct parse_context *ctx, char chr, char fd)
   switch (chr) {
   case '>':
     np->nfile.fd = 1;
-    chr = pgetc_eatbnl(ctx);
+    chr = next_char_eatbnl(ctx);
     switch (chr) {
     case '>':
       np->type = NAPPEND;
@@ -705,12 +711,12 @@ static void int_parseredir(struct parse_context *ctx, char chr, char fd)
     break;
 
   case '<':
-    chr = pgetc_eatbnl(ctx);
+    chr = next_char_eatbnl(ctx);
     switch (chr) {
     case '<':
       np->type = NHERE;
       np->nhere.fd = 0;
-      chr = pgetc_eatbnl(ctx);
+      chr = next_char_eatbnl(ctx);
       ctx->cur_heredoc.here = np;
       if (!(ctx->cur_heredoc.striptabs = (chr == '-'))) {
         pungetc(ctx, chr);
@@ -748,9 +754,9 @@ static void int_parsesub(struct parse_context *ctx)
     obstack_1grow(sctx, '$');
     return;
   }
-  chr = pgetc_eatbnl(ctx);
+  chr = next_char_eatbnl(ctx);
   if (chr == '(') {   /* $(command) or $((arith)) */
-    chr = pgetc_eatbnl(ctx);
+    chr = next_char_eatbnl(ctx);
     if (chr == '(') {
       struct parse_syntax *cursyn = push_syntax(ctx, SYN_ARITH);
       cursyn->dblquote = true;
@@ -773,7 +779,7 @@ static void int_parsesub(struct parse_context *ctx)
     typeloc = obstack_object_size(sctx);
     obstack_1grow(sctx, '\0');
     if (chr == '{') {
-      chr = pgetc_eatbnl(ctx);
+      chr = next_char_eatbnl(ctx);
       subtype = VSNONE;
     } else {
       subtype = VSNORMAL;
@@ -782,23 +788,23 @@ static void int_parsesub(struct parse_context *ctx)
       if (is_name(chr)) {
         do {
           obstack_1grow(sctx, chr);
-          chr = pgetc_eatbnl(ctx);
+          chr = next_char_eatbnl(ctx);
         } while (is_in_name(chr));
       } else if (isdigit(chr)) {
         do {
           obstack_1grow(sctx, chr);
-          chr = pgetc_eatbnl(ctx);
+          chr = next_char_eatbnl(ctx);
         } while ((subtype <= VSNONE || subtype >= VSLENGTH) && isdigit(chr));
       } else if (chr != '}') {
         char cc = chr;
 
-        chr = pgetc_eatbnl(ctx);
+        chr = next_char_eatbnl(ctx);
         if (!subtype && cc == '#') {
           subtype = VSLENGTH;
           if (chr == '_' || isalnum(chr))
             continue;
           cc = chr;
-          chr = pgetc_eatbnl(ctx);
+          chr = next_char_eatbnl(ctx);
           if (cc == '}' || chr == '}') {
             pungetc(ctx, chr);
             subtype = VSNONE;
@@ -827,7 +833,7 @@ static void int_parsesub(struct parse_context *ctx)
         break;
 
       case ':':
-        chr = pgetc_eatbnl(ctx);
+        chr = next_char_eatbnl(ctx);
         switch (chr) {
         default:
           subtype = VSNUL;
@@ -876,7 +882,7 @@ static void int_parsesub(struct parse_context *ctx)
         break;
 
       case '%':
-        chr = pgetc_eatbnl(ctx);
+        chr = next_char_eatbnl(ctx);
         if (chr == cc) {
           subtype = VSTRIMRIGHTMAX;
         } else {
@@ -887,7 +893,7 @@ static void int_parsesub(struct parse_context *ctx)
         break;
 
       case '#':
-        chr = pgetc_eatbnl(ctx);
+        chr = next_char_eatbnl(ctx);
         if (cc == chr) {
           subtype = VSTRIMLEFTMAX;
         } else {
@@ -923,21 +929,25 @@ static void int_parsesub(struct parse_context *ctx)
 /* Parse an old backquote sequence, `...` */
 static void int_parsebackquote_old(struct parse_context *ctx)
 {
+/* FIXME: Uncomment when finishing code
   struct parse_nodelist  newnode;
+*/
   struct obstack        *sctx = &ctx->txtstack;
   char chr;
 
   obstack_1grow(sctx, CTLBACKQ);
   do {
-    chr = pgetc_eatbnl(ctx);
+    struct parse_syntax *syn = dtailq_tail(ctx->lst_syntax);
+
+    chr = next_char_eatbnl(ctx);
     switch (chr) {
     case '`':
       break;
 
     case '\\':
-      chr = pgetc(ctx);
+      chr = next_char(ctx);
       if (chr != '\\' && chr != ' ' && chr != '$' && 
-          ((*ctx->lst_syntax->last)->dblquote || chr != '"')) {
+          (syn->dblquote || chr != '"')) {
         obstack_1grow(sctx, '\\');
       }
       obstack_1grow(sctx, chr);
@@ -948,9 +958,6 @@ static void int_parsebackquote_old(struct parse_context *ctx)
       return;
 
     case '\n':
-      obstack_1grow(sctx, chr);
-      break;
-
     default:
       obstack_1grow(sctx, chr);
       break;

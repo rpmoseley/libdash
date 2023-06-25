@@ -183,4 +183,24 @@ STAILQ_INLINE bool stailq_empty(void *que)
     return true;
   }
 }
+
+STAILQ_INLINE void *stailq_head(void *que)
+{
+  if (que) {
+    struct _stailq *hdr = (struct _stailq *)que;
+    return hdr->first;
+  } else {
+    return NULL;
+  }
+}
+
+STAILQ_INLINE void *stailq_tail(void *que)
+{
+  if (que) {
+    struct _stailq *hdr = (struct _stailq *)que;
+    return *hdr->last;
+  } else {
+    return NULL;
+  }
+}
 #undef STAILQ_INLINE

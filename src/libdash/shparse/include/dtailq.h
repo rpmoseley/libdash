@@ -223,4 +223,24 @@ DTAILQ_INLINE bool dtailq_empty(void *que)
     return false;
   }
 }
+
+DTAILQ_INLINE void *dtailq_head(void *que)
+{
+  if (que) {
+    struct _dtailq *hdr = (struct _dtailq *)que;
+    return hdr->first;
+  } else {
+    return NULL;
+  }
+}
+
+DTAILQ_INLINE void *dtailq_tail(void *que)
+{
+  if (que) {
+    struct _dtailq *hdr = (struct _dtailq *)que;
+    return *hdr->last;
+  } else {
+    return NULL;
+  }
+}
 #undef DTAILQ_INLINE

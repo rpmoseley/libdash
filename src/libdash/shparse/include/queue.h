@@ -19,6 +19,8 @@ extern void stailq_remove(void *que, void *elm);
 extern void stailq_concat(void *que1, void *que2);
 extern void stailq_copy(void *que1, void *que2);
 extern bool stailq_empty(void *que);
+extern void *stailq_head(void *que);
+extern void *stailq_tail(void *que);
 
 extern void *dtailq_init(struct parse_context *ctx, void *que, size_t sizelm);
 extern void dtailq_fini(struct parse_context *ctx, void **que);
@@ -33,6 +35,8 @@ extern void dtailq_remove(void *que, void *elm);
 extern void dtailq_concat(void *que1, void *que2);
 extern void dtailq_copy(void *que1, void *que2);
 extern bool dtailq_empty(void *que);
+extern void *dtailq_head(void *que);
+extern void *dtailq_tail(void *que);
 #endif
 
 /* Define some shared macros */

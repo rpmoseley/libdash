@@ -85,16 +85,6 @@ static enum srcflag dum_close(struct parse_source *src)
 }
 #endif
 
-/* Define common operation functions */
-static enum srcflag cmn_init(struct parse_source_hdr *hdr,
-                             struct parse_source *src)
-{
-  src->ungot.curpos = 0;
-  src->data.baseoff = 0;
-  src->data.curpos = 0;
-  return SF_TRUE;
-}
-
 /* Define the operations that can be performed on a string source */
 static enum srcflag str_read_char(struct parse_source *src, char *chr)
 {
@@ -161,6 +151,7 @@ static enum srcflag str_open(struct parse_source *src, void const *data)
   src->data.remain = strlen((char *)data);
   src->data.baseoff = 0;
   src->data.curpos = 0;
+  src->ungot.curpos = 0;
   src->isclosed = false;
   return SF_TRUE;
 }
@@ -186,7 +177,7 @@ static enum srcflag fyl_read_char(struct parse_source *src, char *chr)
     return SF_NODATA;
   } else {
     /* Use the next character from the data object */
-    if (fread(chr, 1, 1, src->data.data) != 1) return SF_NODATA;
+    if (fread(chr, 1, 1, (FILE *)src->data.data) != 1) return SF_NODATA;
     src->data.remain--;
     src->data.curpos++;
     /* ... Implement ... */
@@ -270,7 +261,6 @@ int fini_source(struct parse_context *ctx)
 /* Define the known operations provided */
 static struct parse_source_ops k_ops[SRC_NUM] = {
   [SRC_STRING] = {       /* String based operations */
-    .init = cmn_init,
     .read_char = str_read_char,
     .unget_char = str_unget_char,
     .tell = str_tell,
@@ -279,7 +269,6 @@ static struct parse_source_ops k_ops[SRC_NUM] = {
     .close = str_close
   },
   [SRC_FILE] = {         /* File based operations */
-    .init = cmn_init,
     .read_char = fyl_read_char,
     .unget_char = fyl_unget_char,
     .tell = fyl_tell,
@@ -344,10 +333,11 @@ char source_next_char(struct parse_context *ctx)
   struct parse_source *src;
   char chr = '\0';
 
-  if (!(hdr = ctx->lst_source) || !(src = hdr->first)) {
+  if (!(hdr = ctx->lst_source)) {
     ctx->int_error = IE_NOSOURCE;
     return '\0';
-  } else {
+  }
+  while ((src = hdr->first) != NULL) {
     enum srcflag sf = src->ops->read_char(src, &chr);
     switch (sf) {
     case SF_ERROR:
@@ -361,13 +351,12 @@ char source_next_char(struct parse_context *ctx)
       return chr;
     case SF_NODATA:
       pop_source(ctx);
-      return '\0';
     default:
       break;
     }
   }
-  /* .. Implement .. */
-  return chr;
+  ctx->int_error = IE_NOSOURCE;
+  return '\0';
 }
 
 void source_unget_char(struct parse_context *ctx, char chr)
