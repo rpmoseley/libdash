@@ -9,15 +9,9 @@
 #include <obstack.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include "libdash_enums.h"
 
 /* Provide the various underlying parser nodes */
-enum parse_nodetype {
-  NCMD = 0, NPIPE, NREDIR, NBACKGND, NSUBSHELL, NAND, NOR, NSEMI, NIF, NWHILE,
-  NUNTIL, NFOR, NCASE, NCLIST, NDEFUN, NARG, NTO, NCLOBBER, NFROM, NFROMTO,
-  NAPPEND, NTOFD, NFROMFD, NHERE, NXHERE, NNOT, NEOF,
-  NUM_PARSER_NODES
-};
-
 struct parse_ncmd {
   enum parse_nodetype type;
   unsigned int linno;
