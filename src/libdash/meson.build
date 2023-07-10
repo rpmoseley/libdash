@@ -1,4 +1,5 @@
 libdash_sources = files(['libdash.c'])
+incldir = include_directories('include')
 
 subdir('shparse')
 
