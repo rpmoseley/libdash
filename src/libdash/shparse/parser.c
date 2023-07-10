@@ -215,8 +215,8 @@ static union parse_node *pipeline(struct parse_context *ctx)
 
 static inline char *tok_strdup(struct parse_context *ctx)
 {
-  return obstack_copy0(&ctx->memstack, ctx->last_token.val.text,
-      strlen(ctx->last_token.val.text));
+  return obstack_copy0(&ctx->memstack, token_text(ctx->last_token),
+      token_length(ctx->last_token));
 }
 
 /* Behaves like original expand.c:rmescapes(s, 0) */
@@ -282,7 +282,7 @@ static void parsefname(struct parse_context *ctx)
     rmescapes(here->eofmark);
     stailq_insert_tail(ctx->lst_heredoc, here);    
   } else if (n->type == NTOFD || n->type == NFROMFD) {
-    char *text = ctx->last_token.val.text;
+    char *text = token_text(ctx->last_token);
 
     if (isdigit(text[0]) && text[1] == '\0') {
       n->ndup.dupfd = text[0] - '0';
@@ -362,7 +362,7 @@ static union parse_node *command(struct parse_context *ctx)
   case TFOR:
     if (readtoken(ctx) != TWORD ||
         ctx->quoteflag ||
-        !goodname(ctx->last_token.val.text)) {
+        !goodname(token_text(ctx->last_token))) {
       ctx_synerror(ctx, SE_BADFORVAR, -1, NULL);
       return NULL;
     }
@@ -532,7 +532,7 @@ static union parse_node *simplecmd(struct parse_context *ctx)
       node->type = NARG;
       node->narg.text = tok_strdup(ctx);
       stailq_copy(&node->narg.backquote, ctx->backquote);
-      if (any_tokflags(saveflags) && isassignment(ctx->last_token.val.text)) {
+      if (any_tokflags(saveflags) && isassignment(token_text(ctx->last_token))) {
         *vpp = node;
         vpp = &node->narg.next;
       } else {

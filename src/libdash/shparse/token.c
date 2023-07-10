@@ -135,7 +135,7 @@ enum parse_tokid readtoken(struct parse_context *ctx)
 
     /* Check for keywords */
     if (savekwd.chkkwd) {
-      enum parse_tokid kwd = findkwd(tok.val.text);
+      enum parse_tokid kwd = findkwd(token_text(tok));
       if (kwd != INV_TOKEN) {
         tok.id = kwd;
         ctx->last_token = tok;
@@ -637,19 +637,22 @@ static bool syn_readtoken(struct parse_context *ctx,
     ctx_synerror(ctx, SE_MISSING, -1, "}"); goto fail;
   }
   obstack_1grow(sctx, '\0');
+  size_t txtlen = obstack_object_size(sctx);
   txt = obstack_finish(sctx);
   if (!heredoc) {
     if ((chr == '>' || chr == '<') && !ctx->quoteflag && 
-        strlen(txt) <= 2 && (!*txt || isdigit(*txt))) {
+        txtlen <= 2 && (!*txt || isdigit(*txt))) {
       int_parseredir(ctx, chr, *txt);
       tok->id = TREDIR;
     } else { /* ... TODO Complete ... */
       tok->id = TWORD;
-      tok->val.text = txt;
+      tok->val.value.text = txt;
+      tok->val.value.len = txtlen;
     }
   } else {
     tok->id = TWORD;
-    tok->val.text = txt;
+    tok->val.value.text = txt;
+    tok->val.value.len = txtlen;
   }
   return true;
 fail:
@@ -916,7 +919,6 @@ static void int_parsesub(struct parse_context *ctx)
       cursyn->dblquote = newsyn != SYN_BASE;
     }
     obstack_1grow(sctx, '=');
-    obstack_1grow(sctx, '\0');
     *(char *)(obstack_base(sctx) + typeloc) = VSBIT | subtype;
     if (subtype != VSNORMAL) {
       cursyn->varnest++;

@@ -215,13 +215,23 @@ enum parse_tokid {
   INV_TOKEN                         /* Used to represent an invalid token */
 };
 
+/* Structure to allow strings to have embedded NULs */
+struct parse_string {
+  char   *text;
+  size_t  len;
+};
+
+/* Structure used to provide the latest token retrieved */
 struct parse_token {
   enum parse_tokid    id;
   union {
-    char             *text;
-    union parse_node *node;
+    struct parse_string  value;
+    union parse_node    *node;
   } val;
 };
+#define token_text(tok)   tok.val.value.text
+#define token_length(tok) tok.val.value.len
+#define token_node(tok)   tok.val.value.node
 
 enum parse_synerrcode {
   SE_NONE = 0,
