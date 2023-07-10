@@ -5,6 +5,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include "libdash_enums.h"
 
 /* Provide opaque types to library structures and unions */
 struct parse_context;
