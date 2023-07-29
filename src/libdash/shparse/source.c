@@ -5,6 +5,9 @@
 
 #include <obstack.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "parser.h"
 #include "queue.h"
 
@@ -16,9 +19,10 @@ enum srcflag {
   SF_ERROR,                    /* Error occured within functions */
 };
 
+struct parse_source_cont;
 struct parse_source_ops {
-  enum srcflag (*init)(struct parse_source_hdr *, struct parse_source *);
-  enum srcflag (*fini)(struct parse_source_hdr *, struct parse_source *);
+  enum srcflag (*init)(struct parse_source_cont *, struct parse_source *);
+  enum srcflag (*fini)(struct parse_source_cont *, struct parse_source *);
   enum srcflag (*read_char)(struct parse_source *, char *);
   enum srcflag (*unget_char)(struct parse_source *, char);
   enum srcflag (*tell)(struct parse_source *, off_t *);
@@ -28,14 +32,17 @@ struct parse_source_ops {
   /* ... */
 };
 
+/* Provide the ungot structure */
 #define MAX_UNGOT 4
+struct _source_ungot {
+  char                   data[MAX_UNGOT];  /* Ungot data */
+  size_t                 curpos;           /* Length of ungot data */
+};
+
 struct parse_source {
   struct parse_source     *next;             /* Previous source in list */
   struct parse_source_ops *ops;              /* Related operations */
-  struct _source_ungot {
-    char                   data[MAX_UNGOT];  /* Ungot data */
-    size_t                 curpos;           /* Length of ungot data */
-  } ungot;
+  struct _source_ungot     ungot;            /* Ungot data for source */
   struct _source_data {
     void const            *data;             /* Underlying data */
     off_t                  baseoff;          /* Base offset for position */
@@ -47,14 +54,51 @@ struct parse_source {
   /* ... */
 };
 
+/* Declare the LIFO structure */
+#ifdef STAILQ_HEAD
+STAILQ_HEAD(source_hdr, source);
+#else
+struct parse_source_hdr {
+  struct obstack        memstack;
+  struct parse_source  *first;
+  struct parse_source **last;
+  size_t sizelm;
+};
+#endif
+
+/* Declare the internals of the source header */
+struct parse_source_cont {
+  struct parse_source_hdr lifo;       /* LIFO of sources */
+  struct _source_ungot    ungot;      /* Global UNGOT data */
+};
+
+/* Provide the shared functionality of using UNGOT data */
+static enum srcflag push_ungot(struct _source_ungot *ungot, char chr)
+{
+  if (ungot->curpos >= MAX_UNGOT) return SF_NODATA;
+  ungot->data[ungot->curpos++] = chr;
+  return SF_TRUE;
+}
+static enum srcflag pop_ungot(struct _source_ungot *ungot, char *chr)
+{
+  if (ungot->curpos) {
+    if (chr)
+      *chr = ungot->data[--ungot->curpos];
+    else
+      --ungot->curpos;
+    return SF_TRUE;
+  }
+  return SF_NODATA;
+}
+
 #if defined(NEED_DUMMY_OPS) && NEED_DUMMY_OPS
 /* Provide some dummy functions that can be used in place of open/close */
-static enum srcflag dum_init(struct parse_source_hdr *hdr,
+static enum srcflag dum_init(struct parse_source_cont *hdr,
                              struct parse_source *src)
 {
   return SF_TRUE;
 }
-static enum srcflag dum_fini(struct parse_source_hdr *hdr,
+static enum srcflag dum_fini(struct parse_source_cont *hdr,
                              struct parse_source *src)
 {
   return SF_TRUE;
@@ -112,11 +156,8 @@ static enum srcflag str_unget_char(struct parse_source *src, char chr)
     /* Move back in the actual data */
     src->data.curpos--;
     src->data.remain++;
-  } else if (src->ungot.curpos < MAX_UNGOT) {
+  } else if (push_ungot(&src->ungot, chr) != SF_TRUE) {
     /* Add to the ungot buffer */
-    src->ungot.data[src->ungot.curpos++] = chr;
-  } else {
-    /* Ungot buffer is full */
     return SF_FALSE;
   }
   return SF_TRUE;
@@ -166,16 +207,14 @@ static enum srcflag str_close(struct parse_source *src)
 static enum srcflag fyl_read_char(struct parse_source *src, char *chr)
 {
   if (!src || !chr) return SF_FALSE;
-  if (src->ungot.data && src->ungot.curpos > 0) {
-    /* Attempt to use ungot data first */
-    *chr = *((char *)src->ungot.data + src->ungot.curpos);
-    src->ungot.curpos--;
+  if (pop_ungot(&src->ungot, chr) == SF_TRUE) {
+    return SF_TRUE;
   } else if (src->isclosed) {
     /* Unable to fetch more data if it has been closed */
     return SF_FALSE;
   } else if (!src->data.remain) {
     return SF_NODATA;
-  } else {
+  } else if (src->data.data) {
     /* Use the next character from the data object */
     if (fread(chr, 1, 1, (FILE *)src->data.data) != 1) return SF_NODATA;
     src->data.remain--;
@@ -191,9 +230,7 @@ static enum srcflag fyl_unget_char(struct parse_source *src, char chr)
   } else if (src->data.remain) {
     src->data.remain++;
     src->data.curpos--;
-  } else if (src->ungot.curpos < MAX_UNGOT) {
-    src->ungot.data[src->ungot.curpos++] = chr;
-  } else {
+  } else if (push_ungot(&src->ungot, chr) != SF_TRUE) {
     return SF_FALSE;
   }
   return SF_TRUE;
@@ -215,6 +252,7 @@ static enum srcflag fyl_open(struct parse_source *src, void const *data)
 {
   const char *fname;
   FILE *fd;
+  struct stat stbuf;
 
   if (!src || !data) return SF_FALSE;
   fname = (const char *)data;
@@ -222,9 +260,11 @@ static enum srcflag fyl_open(struct parse_source *src, void const *data)
   src->data.data = fd;
   src->data.baseoff = 0;
   src->data.curpos = 0;
-  fseek(fd, 0, SEEK_END);
-  src->data.remain = ftell(fd);
-  fseek(fd, 0, SEEK_SET);
+  if (fstat(fileno(fd), &stbuf)) {
+    fclose(fd);
+    return SF_FALSE;
+  }
+  src->data.remain = stbuf.st_size;
   src->ungot.curpos = 0;
   src->isclosed = false;
   return SF_TRUE;
@@ -244,17 +284,21 @@ static enum srcflag fyl_close(struct parse_source *src)
 
 int init_source(struct parse_context *ctx)
 {
-  if (!ctx->lst_source) {
-    ctx->lst_source = obstack_alloc(&ctx->memstack,
-        sizeof(struct parse_source_hdr));
+  if (ctx->source) {
+    return 1;
+  } else {
+    ctx->source = obstack_alloc(&ctx->memstack,
+        sizeof(struct parse_source_cont));
+    stailq_init(ctx, ctx->source, sizeof(struct parse_source));
+    ctx->source->ungot.curpos = 0;
   }
-  stailq_init(ctx, ctx->lst_source, sizeof(struct parse_source));
   return 0;
 }
 
 int fini_source(struct parse_context *ctx)
 {
-  stailq_clear(ctx->lst_source);
+  /*... FIXME Need to close all outstanding sources ...*/
+  stailq_clear(ctx->source);
   return 0;
 }
 
@@ -295,19 +339,20 @@ struct parse_source *push_source(struct parse_context *ctx,
                                  enum parse_srctype    type,
                                  void const           *data)
 {
-  struct parse_source_hdr *hdr = ctx->lst_source;
-
-  if (type < SRC_NUM) {
-    struct parse_source *node = obstack_alloc(&hdr->memstack,
-        sizeof(struct parse_source));
-    node->ops = &k_ops[type];
-    if (node->ops->init)
-      node->ops->init(hdr, node);
-    if (node->ops->open(node, data)) {
-      stailq_insert_head(hdr, node);
-      return node;
+  if (ctx && type < SRC_NUM) {
+    struct parse_source_hdr *hdr = &ctx->source->lifo;
+    if (hdr) {
+      struct parse_source *node;
+      node = obstack_alloc(&hdr->memstack, sizeof(struct parse_source));
+      node->ops = &k_ops[type];
+      if (node->ops->init)
+        node->ops->init(ctx->source, node);
+      if (node->ops->open(node, data)) {
+        stailq_insert_head(hdr, node);
+        return node;
+      }
+      obstack_free(&hdr->memstack, node);
     }
-    obstack_free(&hdr->memstack, node);
   }
   return NULL;
 }
@@ -315,16 +360,17 @@ struct parse_source *push_source(struct parse_context *ctx,
 /* Remove the last source from the stack of sources */
 struct parse_source *pop_source(struct parse_context *ctx)
 {
-  struct parse_source_hdr *hdr = ctx->lst_source;
-  if (hdr) {
-    struct parse_source *fre = hdr->first;
-    stailq_remove_head(hdr);
-    fre->ops->close(fre);
-    obstack_free(&hdr->memstack, fre);
-    return hdr->first;
-  } else {
-    return NULL;
+  if (ctx) {
+    struct parse_source_hdr *hdr = &ctx->source->lifo;
+    if (hdr) {
+      struct parse_source *fre = stailq_head(hdr);
+      stailq_remove_head(hdr);
+      fre->ops->close(fre);
+      obstack_free(&hdr->memstack, fre);
+      return stailq_head(hdr);
+    }
   }
+  return NULL;
 }
 
 char source_next_char(struct parse_context *ctx)
@@ -333,11 +379,11 @@ char source_next_char(struct parse_context *ctx)
   struct parse_source *src;
   char chr = '\0';
 
-  if (!(hdr = ctx->lst_source)) {
+  if (!(hdr = &ctx->source->lifo)) {
     ctx->int_error = IE_NOSOURCE;
     return '\0';
   }
-  while ((src = hdr->first) != NULL) {
+  while ((src = stailq_head(hdr)) != NULL) {
     enum srcflag sf = src->ops->read_char(src, &chr);
     switch (sf) {
     case SF_ERROR:
@@ -346,6 +392,9 @@ char source_next_char(struct parse_context *ctx)
     case SF_FALSE:
       return '\0';
     case SF_TRUE:
+#if SHPARSE_DEBUG == 2
+      fprintf(stderr, "READCHAR => %c\n", chr);
+#endif
       if (chr == '\n')
         src->lineno++;
       return chr;
@@ -361,24 +410,42 @@ char source_next_char(struct parse_context *ctx)
 
 void source_unget_char(struct parse_context *ctx, char chr)
 {
-  struct parse_source *src;
-
-  if (!(src = ctx->lst_source->first)) {
-    ctx->int_error = IE_NOSOURCE;
-  } else if (!src->ops->unget_char(src, chr)) {
-    ctx->int_error = IE_NOUNGET;
+  if (ctx) {
+    struct parse_source *src = stailq_head(&ctx->source->lifo);
+    if (src && src->ops->unget_char) {
+      if (src->ops->unget_char(src, chr) != SF_TRUE) {
+        ctx->int_error = IE_NOUNGET;
+      } 
+    } else if (push_ungot(&ctx->source->ungot, chr) != SF_TRUE) {
+      ctx->int_error = IE_NOUNGET;
+    }
   }
-  /* .. Implement .. */
-  return;
+}
+
+void source_unget(struct parse_context *ctx)
+{
+  if (ctx) {
+    struct parse_source *src = stailq_head(&ctx->source->lifo);
+    if (src) {
+      if (src->ops->unget_char(src, ctx->cur_char) != SF_TRUE) {
+        ctx->int_error = IE_NOUNGET;
+      }
+    } else if (push_ungot(&ctx->source->ungot, ctx->cur_char) != SF_TRUE) {
+      ctx->int_error = IE_NOUNGET;
+    }
+  }
 }
 
 unsigned int source_currline(struct parse_context *ctx)
 {
-  struct parse_source *src;
+  if (ctx) {
+    struct parse_source *src;
 
-  if (!(src = ctx->lst_source->first)) {
-    ctx->int_error = IE_NOSOURCE;
-    return 0;
+    if (!(src = stailq_head(ctx->source))) {
+      ctx->int_error = IE_NOSOURCE;
+      return 0;
+    }
+    return src->lineno;
   }
-  return src->lineno;
+  return 0;
 }

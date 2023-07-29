@@ -5,7 +5,7 @@
 #pragma once
 
 #include <stdbool.h>
-#include "libdash_enums.h"
+#include "enums.h"
 
 /* Provide opaque types to library structures and unions */
 struct parse_context;
@@ -31,3 +31,4 @@ int parse_walk_type(struct parse_walkinfo *);
 bool parse_iseof(union parse_node *);
 union parse_node *parse_next_command(struct parse_context *);
 #endif
+enum parse_tokid parse_next_token(struct parse_context *);

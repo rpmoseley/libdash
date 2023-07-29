@@ -51,7 +51,12 @@ inline_queue = get_option('inline_queue_funcs')
 conf.set10('INLINE_QUEUE_FUNCS', inline_queue,
   description: 'Define if the queue functions should be compiled inline')
 
-# TODO: Add further checks here
+# Enable debug support if required
+bld_debug = get_option('build_debug')
+if bld_debug > 0
+  conf.set('SHPARSE_DEBUG', get_option('build_debug'),
+    description: 'Enable built-in debug support')
+endif
 
 # Write out the config.h file to be used
 config_h = configure_file(configuration: conf,

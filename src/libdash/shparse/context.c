@@ -19,7 +19,7 @@ bool ctx_init(struct parse_context **ctx)
   if (*ctx) {
     /* Re-initialise existing context */
     new = *ctx;
-    stailq_clear(new->lst_source);
+    stailq_clear(new->source);
     dtailq_clear(new->lst_syntax);
     stailq_clear(new->lst_heredoc);
     stailq_clear(new->backquote);
@@ -27,7 +27,8 @@ bool ctx_init(struct parse_context **ctx)
     obstack_free(&new->txtstack, NULL);
   } else {
     /* Initialise a new context */
-    if (!(new = malloc(sizeof(struct parse_context)))) return false;
+    if (!(new = malloc(sizeof(struct parse_context))))
+      return false;
     memset(new, 0, sizeof(struct parse_context));
     obstack_init(&new->memstack);
     obstack_init(&new->txtstack);
@@ -113,7 +114,7 @@ void clr_synerror(struct parse_context *ctx)
 void ctx_synerror_expect(struct parse_context *ctx,
                          enum parse_tokid      tokid)
 {
-  if (ctx && tokid != INV_TOKEN) {
+  if (ctx && tokid != INV_PARSER_TOKEN) {
     ctx->synerror.code = SE_EXPECTED;
     ctx->synerror.token.id = tokid;
     if (ctx->synerror.errtext) {

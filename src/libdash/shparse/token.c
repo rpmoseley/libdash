@@ -81,16 +81,63 @@ enum parse_tokid findkwd(const char *text)
   if (text) {
     struct tokinfo kwdkey = { .kwd = text };
     struct tokinfo *kwdptr =
-      bsearch(&kwdkey, tokinfo+TNOT, NUM_TOKEN-TNOT, sizeof(struct tokinfo),
+      bsearch(&kwdkey, tokinfo+TNOT, NUM_PARSER_TOKEN-TNOT, sizeof(struct tokinfo),
           findkwd_cmp);
     if (kwdptr)
       return kwdptr->id;
   }
-  return INV_TOKEN;
+  return INV_PARSER_TOKEN;
 }
 
 /* Declare the functions called by the main tokenizer function */
 static bool int_readtoken(struct parse_context *ctx, struct parse_token *tok);
+
+#if SHPARSE_DEBUG > 0
+static void dump_parse_tokid(FILE *fd, const char *pmt, struct parse_token *tok)
+{
+  const char *desc = "INVALID";
+  switch (tok->id) {
+# define DESC(t) case t: desc = #t; break
+  DESC(TEOF);
+  DESC(TNL);
+  DESC(TSEMI);
+  DESC(TBACKGND);
+  DESC(TAND);
+  DESC(TOR);
+  DESC(TPIPE);
+  DESC(TLP);
+  DESC(TRP);
+  DESC(TENDCASE);
+  DESC(TENDBQUOTE);
+  DESC(TREDIR);
+  DESC(TWORD);
+  DESC(TNOT);
+  DESC(TCASE);
+  DESC(TDO);
+  DESC(TDONE);
+  DESC(TELIF);
+  DESC(TELSE);
+  DESC(TESAC);
+  DESC(TFI);
+  DESC(TFOR);
+  DESC(TIF);
+  DESC(TIN);
+  DESC(TTHEN);
+  DESC(TUNTIL);
+  DESC(TWHILE);
+  DESC(TBEGIN);
+  DESC(TEND);
+# undef DESC
+  case NUM_PARSER_TOKEN:
+  case INV_PARSER_TOKEN: desc = "INVALID"; break;
+  }
+  if (tok->id == TWORD) {
+    fprintf(fd, "%s: %s (%zd/%s)\n", pmt, desc, tok->val.value.len, tok->val.value.text);
+  } else {
+    fprintf(fd, "%s: %s\n", pmt, desc);
+  }
+};
+#endif
 
 /* Provide the main tokenizer routine */
 enum parse_tokid readtoken(struct parse_context *ctx)
@@ -107,6 +154,9 @@ enum parse_tokid readtoken(struct parse_context *ctx)
 
     /* Call the internal function to actually retrieve the next token */
     int_readtoken(ctx, &tok);
+#if SHPARSE_DEBUG > 0
+    dump_parse_tokid(stderr, "INTTOKEN", &tok);
+#endif
 
     /* Eat newlines */
     if (savekwd.chknl) {
@@ -136,7 +186,7 @@ enum parse_tokid readtoken(struct parse_context *ctx)
     /* Check for keywords */
     if (savekwd.chkkwd) {
       enum parse_tokid kwd = findkwd(token_text(tok));
-      if (kwd != INV_TOKEN) {
+      if (kwd != INV_PARSER_TOKEN) {
         tok.id = kwd;
         ctx->last_token = tok;
         return kwd;
@@ -156,6 +206,8 @@ static inline char next_char(struct parse_context *ctx)
 {
   char chr;
 
+  ctx->lst_char[1] = ctx->lst_char[0];
+  ctx->lst_char[0] = ctx->cur_char;
   ctx->cur_char = chr = source_next_char(ctx);
   return chr;
 }
@@ -166,17 +218,14 @@ static inline char next_char_eatbnl(struct parse_context *ctx)
 
   while ((chr = source_next_char(ctx)) == '\\') {
     if (source_next_char(ctx) != '\n') {
-      source_unget_char(ctx, chr);
+      source_unget(ctx);
       break;
     }
   }
+  ctx->lst_char[1] = ctx->lst_char[0];
+  ctx->lst_char[0] = ctx->cur_char;
   ctx->cur_char = chr;
   return chr;
-}
-
-static inline void pungetc(struct parse_context *ctx, char chr)
-{
-  source_unget_char(ctx, chr);
 }
 
 static bool syn_readtoken(struct parse_context *,
@@ -189,7 +238,11 @@ static bool int_readtoken(struct parse_context *ctx,
                           struct parse_token   *tok)
 {
   if (!ctx || !tok) return false;
-  
+ 
+  /* Clear out any existing data from the token */
+  tok->id = INV_PARSER_TOKEN;
+  tok->val.node = NULL;
+
   /* Repeat checking until a token or word is found */
   while (true) {
     char chr = next_char_eatbnl(ctx);
@@ -200,7 +253,7 @@ static bool int_readtoken(struct parse_context *ctx,
 
       case '#':
         while ((chr = next_char(ctx)) != '\n' && chr != PEOF);
-        pungetc(ctx, chr);
+        source_unget(ctx);
         continue;
 
       case '\n':
@@ -215,7 +268,7 @@ static bool int_readtoken(struct parse_context *ctx,
         if (next_char_eatbnl(ctx) == '&') {
           tok->id = TAND;
         } else {
-          pungetc(ctx, chr);
+          source_unget(ctx);
           tok->id = TBACKGND;
         }
         return true;
@@ -224,7 +277,7 @@ static bool int_readtoken(struct parse_context *ctx,
         if (next_char_eatbnl(ctx) == '|') {
           tok->id = TOR;
         } else {
-          pungetc(ctx, chr);
+          source_unget(ctx);
           tok->id = TPIPE;
         } 
         return true;
@@ -233,7 +286,7 @@ static bool int_readtoken(struct parse_context *ctx,
         if (next_char_eatbnl(ctx) == ';') {
           tok->id = TENDCASE;
         } else {
-          pungetc(ctx, chr);
+          source_unget(ctx);
           tok->id = TSEMI;
         }
         return true;
@@ -518,7 +571,7 @@ static bool syn_readtoken(struct parse_context *ctx,
         if (chr == PEOF) {
           obstack_1grow(sctx, CTLESC);
           obstack_1grow(sctx, '\\');
-          pungetc(ctx, chr);
+          source_unget(ctx);
         } else {
           if (cursyn->dblquote && chr != '\\' && chr != '`' && chr != '$' &&
               (chr != '"' || (heredoc && !cursyn->varnest)) &&
@@ -595,7 +648,7 @@ static bool syn_readtoken(struct parse_context *ctx,
             cursyn = pop_syntax(ctx);
           } else {
             obstack_1grow(sctx, ')');
-            pungetc(ctx, chr);
+            source_unget(ctx);
           }
         }
         break;
@@ -644,7 +697,8 @@ static bool syn_readtoken(struct parse_context *ctx,
         txtlen <= 2 && (!*txt || isdigit(*txt))) {
       int_parseredir(ctx, chr, *txt);
       tok->id = TREDIR;
-    } else { /* ... TODO Complete ... */
+    } else {
+      source_unget(ctx);
       tok->id = TWORD;
       tok->val.value.text = txt;
       tok->val.value.len = txtlen;
@@ -709,7 +763,7 @@ static void int_parseredir(struct parse_context *ctx, char chr, char fd)
 
     default:
       np->type = NTO;
-      pungetc(ctx, chr);
+      source_unget(ctx);
     }
     break;
 
@@ -722,7 +776,7 @@ static void int_parseredir(struct parse_context *ctx, char chr, char fd)
       chr = next_char_eatbnl(ctx);
       ctx->cur_heredoc.here = np;
       if (!(ctx->cur_heredoc.striptabs = (chr == '-'))) {
-        pungetc(ctx, chr);
+        source_unget(ctx);
       }
       break;
 
@@ -739,7 +793,7 @@ static void int_parseredir(struct parse_context *ctx, char chr, char fd)
     default:
       np->type = NFROM;
       np->nfile.fd = 0;
-      pungetc(ctx, chr);
+      source_unget(ctx);
     }
     if (isdigit(fd))
       np->nfile.fd = fd - '0';
@@ -765,12 +819,12 @@ static void int_parsesub(struct parse_context *ctx)
       cursyn->dblquote = true;
       obstack_1grow(sctx, CTLARI);
     } else {
-      pungetc(ctx, chr);
+      source_unget(ctx);
       int_parsebackquote_new(ctx);
     }
   } else if (chr != '{' && !is_name(chr) && !is_special(chr)) {
     obstack_1grow(sctx, '$');
-    pungetc(ctx, chr);
+    source_unget(ctx);
   } else {
     size_t typeloc;                  /* Offset to byte storing type info */
     enum parse_varsubs subtype;
@@ -809,7 +863,7 @@ static void int_parsesub(struct parse_context *ctx)
           cc = chr;
           chr = next_char_eatbnl(ctx);
           if (cc == '}' || chr == '}') {
-            pungetc(ctx, chr);
+            source_unget(ctx);
             subtype = VSNONE;
             chr = cc;
             cc = '#';
@@ -828,7 +882,7 @@ static void int_parsesub(struct parse_context *ctx)
       break;
     }
     if (badsub) {
-      pungetc(ctx, chr);
+      source_unget(ctx);
     } else if (!subtype) {
       char cc = chr;
       switch (chr) {
@@ -889,7 +943,7 @@ static void int_parsesub(struct parse_context *ctx)
         if (chr == cc) {
           subtype = VSTRIMRIGHTMAX;
         } else {
-          pungetc(ctx, chr);
+          source_unget(ctx);
           subtype = VSTRIMRIGHT;
         }
         newsyn = SYN_BASE;
@@ -901,7 +955,7 @@ static void int_parsesub(struct parse_context *ctx)
           subtype = VSTRIMLEFTMAX;
         } else {
           subtype = VSTRIMLEFT;
-          pungetc(ctx, chr);
+          source_unget(ctx);
         }
         newsyn = SYN_BASE;
         break;
@@ -909,7 +963,7 @@ static void int_parsesub(struct parse_context *ctx)
     } else {
       if (subtype == VSLENGTH && chr != '}')
         subtype = VSNONE;
-      pungetc(ctx, chr);
+      source_unget(ctx);
     }
     if (newsyn == SYN_ARITH)
       newsyn = SYN_DQUOTE;

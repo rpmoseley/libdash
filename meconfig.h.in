@@ -1,7 +1,0 @@
-#mesondefine HAVE_ALIAS_ATTRIBUTE
-
-#mesondefine HAVE_UNUSED_ATTRIBUTE
-
-#mesondefine obstack_chunk_alloc
-
-#mesondefine obstack_chunk_free

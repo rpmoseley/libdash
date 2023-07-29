@@ -9,7 +9,7 @@
 #include <obstack.h>
 #include <stdbool.h>
 #include <stdio.h>
-#include "libdash_enums.h"
+#include "enums.h"
 
 /* Provide the various underlying parser nodes */
 struct parse_ncmd {
@@ -170,14 +170,6 @@ struct parse_savheredoc {
   struct parse_heredoc_hdr  here;
 };
 
-enum parse_toksyn {
-  SYN_BASE = 0,                   /* Normal syntax handling */
-  SYN_SQUOTE,                     /* Single quote syntax handling */
-  SYN_DQUOTE,                     /* Double quote syntax handling */
-  SYN_BQUOTE,                     /* Back quote syntax handling */
-  SYN_ARITH,                      /* Arithmetic handling */
-};
-
 struct parse_syntax {
   struct parse_syntax   *next;
   struct parse_syntax  **prev;
@@ -201,14 +193,6 @@ struct parse_syntax_hdr {
 };
 #endif
 
-enum parse_tokid {
-  TEOF = 0, TNL, TSEMI, TBACKGND, TAND, TOR, TPIPE, TLP, TRP, TENDCASE,
-  TENDBQUOTE, TREDIR, TWORD, TNOT, TCASE, TDO, TDONE, TELIF, TELSE, TESAC,
-  TFI, TFOR, TIF, TIN, TTHEN, TUNTIL, TWHILE, TBEGIN, TEND,
-  NUM_TOKEN,                        /* Should be last in enum */
-  INV_TOKEN                         /* Used to represent an invalid token */
-};
-
 /* Structure to allow strings to have embedded NULs */
 struct parse_string {
   char   *text;
@@ -227,18 +211,6 @@ struct parse_token {
 #define token_length(tok) tok.val.value.len
 #define token_node(tok)   tok.val.value.node
 
-enum parse_synerrcode {
-  SE_NONE = 0,
-  SE_UNKNOWN,
-  SE_EXPECTED,
-  SE_BADFORVAR,
-  SE_BADFUNCNAME,
-  SE_BADFDNUM,
-  SE_MISSING,
-  SE_QUOTESTR,
-  SE_BACKEOF,
-};
-
 struct parse_synerror {
   enum parse_synerrcode  code;
   struct parse_token     token;
@@ -251,12 +223,6 @@ struct parse_tokflags {
        chknl      : 1,
        chkeofmark : 1,
        chkendtok  : 1;
-};
-
-enum tri_value {
-  tf_false = 0,
-  tf_true,
-  tf_keep
 };
 
 static inline void clr_tokflags(struct parse_tokflags *flag)
@@ -306,39 +272,13 @@ static inline bool any_tokflags(struct parse_tokflags flag)
   return !!chkflag.all;
 }
 
-enum parse_interrcode {
-  IE_NONE = 0,                             /* No internal error */
-  IE_NOSOURCE,                             /* No source stack defined */
-  IE_NOUNGET,                              /* No data to unget */
-  IE_NOGETCHR,                             /* No data to get */
-};
-
-/* Define the types of source that can be processed */
-enum parse_srctype {
-  SRC_FILE = 0,                /* Source is a named file */
-  SRC_STRING,                  /* Source is a string */
-  SRC_NUM,                     /* Number of source types */
-#if defined(NEED_DUMMY_OPS) && NEED_DUMMY_OPS
-  SRC_DUMMY                    /* Dummy source */
-#endif
-};
-
 struct parse_source;
-#ifdef STAILQ_HEAD
-STAILQ_HEAD(source_hdr, source);
-#else
-struct parse_source_hdr {
-  struct obstack        memstack;
-  struct parse_source  *first;
-  struct parse_source **last;
-  size_t sizelm;
-};
-#endif
+struct parse_source_cont;
 
 struct parse_context {
   struct obstack             memstack;       /* Used for node allocation */
   struct obstack             txtstack;       /* Used for textual values */
-  struct parse_source_hdr   *lst_source;     /* Queue of sources */
+  struct parse_source_cont  *source;         /* Associated sources */
   struct parse_syntax_hdr   *lst_syntax;     /* Queue of syntax tables */
   struct parse_heredoc_hdr  *lst_heredoc;    /* Queue of here documents */
   struct parse_savheredoc   *sav_heredoc;    /* List of saved here documents */
@@ -350,34 +290,12 @@ struct parse_context {
   struct parse_synerror      synerror;       /* Syntax error status */
   enum   parse_interrcode    int_error;      /* Internal error status */
   char                       cur_char;       /* Last character read */
-  char                       lst_char[2];    /* Previous characters */
+  char                       lst_char[3];    /* Previous characters - extra for debugging information to be correct */
   bool                       tokpushback;    /* Set if token pushed back */
   bool                       quoteflag;      /* Set if in quote mode */
 };
 
 #define FAKEEOFMARK (const char *)1
-
-/* Control characters in argument strings */
-enum parse_esccodes {
-  PEOF = 0, CTLESC, CTLVAR, CTLENDVAR, CTLBACKQ, CTLARI, CTLENDARI, CTLQUOTEMARK
-};
-
-enum parse_varsubs {
-  VSTYPE         = 0xf,         /* Type of variable substitution */
-  VSNUL          = 0x10,        /* Colon--treat the empty string as unset */
-  VSBIT          = 0x20,        /* Ensure subtype is not zero */
-  VSNONE         = 0,           /* No special value */
-  VSNORMAL       = 0x1,         /* Normal variable: $var or ${var} */
-  VSMINUS        = 0x2,         /* ${var-text} */
-  VSPLUS         = 0x3,         /* ${var+text} */
-  VSQUESTION     = 0x4,         /* ${var?message} */
-  VSASSIGN       = 0x5,         /* ${var=text} */
-  VSTRIMRIGHT    = 0x6,         /* ${var%pattern} */
-  VSTRIMRIGHTMAX = 0x7,         /* ${var%%pattern} */
-  VSTRIMLEFT     = 0x8,         /* ${var#pattern} */
-  VSTRIMLEFTMAX  = 0x9,         /* ${var##pattern} */
-  VSLENGTH       = 0xa,         /* ${#var} */
-};
 
 #ifndef __CONCAT
 # define __CONCAT(a, b)  a ## b
@@ -484,7 +402,7 @@ extern unsigned int source_currline(struct parse_context *);
 extern const struct builtincmd *find_builtin(const char *);
 extern bool builtin_isspecial(const struct builtincmd *);
 extern char source_next_char(struct parse_context *);
-extern void source_unget_char(struct parse_context *,char);
+extern void source_unget(struct parse_context *);
 extern int init_source(struct parse_context *);
 extern int fini_source(struct parse_context *);
 extern struct parse_source *push_source(struct parse_context *,

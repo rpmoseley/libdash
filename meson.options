@@ -1,1 +1,2 @@
 option('inline_queue_funcs', type: 'boolean', value: false, description: 'Build queue functions inline')
+option('build_debug', type: 'integer', value: 0, description: 'Build with extra debug enabled')

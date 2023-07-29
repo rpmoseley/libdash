@@ -164,7 +164,7 @@ STAILQ_INLINE void stailq_copy(void *que1, void *que2)
   if (que1 && que2) {
     struct _stailq *hdr1 = (struct _stailq *)que1;
     struct _stailq *hdr2 = (struct _stailq *)que2;
-    if (hdr1->sizelm == hdr2->sizelm) {
+    if (hdr1->last && hdr2->last && hdr1->sizelm == hdr2->sizelm) {
       struct _stailq_elm *ptr;
       obstack_free(&hdr1->memstack, NULL);
       for (ptr = hdr2->first; ptr; ptr = ptr->next) {
